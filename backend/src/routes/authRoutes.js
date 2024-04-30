@@ -1,68 +1,39 @@
-const router = require('express').Router();
+const express = require('express');
+const router = express.Router();
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
+const authenticateToken = require('../middleware/authenticateToken');
 
-// User registration
-router.post('/register', async (req, res) => {
-  const { email, password, role } = req.body;
-
-  // Check if user already exists
-  const existingUser = await prisma.user.findUnique({
-    where: { email }
-  });
-
-  if (existingUser) {
-    return res.status(400).json({ message: "User already exists" });
-  }
-
-  const hashedPassword = await bcrypt.hash(password, 10); // Hash the password
-
+// Get user profile
+router.get('/profile', authenticateToken, async (req, res) => {
   try {
-    const user = await prisma.user.create({
-      data: {
-        email,
-        password: hashedPassword,
-        role,
-      },
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.id },
+      select: { email: true, name: true, role: true } // Exclude password and other sensitive fields
     });
-
-    // Create token
-    const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: '1h' });
-
-    res.status(201).json({ userId: user.id, token, message: "User registered successfully" });
+    res.json(user);
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: "Error during registration", error: error.message });
+    res.status(500).json({ message: "Error retrieving user profile", error: error.message });
   }
 });
 
-// User login
-router.post('/login', async (req, res) => {
-  const { email, password } = req.body;
-
+// Update user profile
+router.put('/profile', authenticateToken, async (req, res) => {
+  const { name, email, newPassword } = req.body;
   try {
-    const user = await prisma.user.findUnique({
-      where: { email }
+    const updatedData = {};
+    if (name) updatedData.name = name;
+    if (email) updatedData.email = email;
+    if (newPassword) updatedData.password = await bcrypt.hash(newPassword, 10);
+
+    const user = await prisma.user.update({
+      where: { id: req.user.id },
+      data: updatedData
     });
-
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
-    }
-
-    const isMatch = await bcrypt.compare(password, user.password); // Compare provided password with stored hash
-
-    if (!isMatch) {
-      return res.status(400).json({ message: "Invalid credentials" });
-    }
-
-    const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: '1h' });
-
-    res.status(200).json({ userId: user.id, token, message: "Logged in successfully" });
+    res.json({ message: "Profile updated successfully", user: { email: user.email, name: user.name, role: user.role } });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: "Error logging in", error: error.message });
+    res.status(500).json({ message: "Error updating profile", error: error.message });
   }
 });
 
